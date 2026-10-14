@@ -132,6 +132,11 @@ void EnsureWindowRhi(not_null<QWidget*> window) {
 	if (!WidgetsRhiSupported()) {
 		return;
 	}
+#ifdef Q_OS_WIN
+	if (window->testAttribute(Qt::WA_TranslucentBackground)) {
+		return;
+	}
+#endif // Q_OS_WIN
 	const auto primer = Ui::CreateChild<QRhiWidget>(window.get());
 	ApplyRhiApi(primer);
 	primer->setAttribute(Qt::WA_TransparentForMouseEvents);

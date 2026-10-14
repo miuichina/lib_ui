@@ -33,6 +33,8 @@ constexpr auto kDefaultFrameDuration = crl::time(33);
 constexpr auto kDefaultFramesCount = 60;
 constexpr auto kAutoPauseTimeout = crl::time(1000);
 
+auto SpoilerSnapshotDepth = 0;
+
 [[nodiscard]] SpoilerMessDescriptor DefaultDescriptorText() {
 	const auto ratio = style::DevicePixelRatio();
 	const auto size = style::ConvertScale(128) * ratio;
@@ -835,6 +837,14 @@ std::optional<SpoilerMessCached> SpoilerMessCached::FromSerialized(
 		header.canvasSize);
 }
 
+SpoilerAnimationSnapshot::SpoilerAnimationSnapshot() {
+	++SpoilerSnapshotDepth;
+}
+
+SpoilerAnimationSnapshot::~SpoilerAnimationSnapshot() {
+	--SpoilerSnapshotDepth;
+}
+
 SpoilerAnimation::SpoilerAnimation(Fn<void()> repaint)
 : _repaint(std::move(repaint)) {
 	Expects(_repaint != nullptr);
@@ -848,6 +858,9 @@ SpoilerAnimation::~SpoilerAnimation() {
 }
 
 int SpoilerAnimation::index(crl::time now, bool paused) {
+	if (SpoilerSnapshotDepth) {
+		return (_accumulated / kDefaultFrameDuration) % kDefaultFramesCount;
+	}
 	_scheduled = false;
 	const auto add = std::min(now - _last, kDefaultFrameDuration);
 	if (anim::Disabled()) {

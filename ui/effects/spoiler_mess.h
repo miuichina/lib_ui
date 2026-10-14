@@ -82,6 +82,15 @@ private:
 
 };
 
+class SpoilerAnimationSnapshot final {
+public:
+	SpoilerAnimationSnapshot();
+	~SpoilerAnimationSnapshot();
+	SpoilerAnimationSnapshot(const SpoilerAnimationSnapshot&) = delete;
+	SpoilerAnimationSnapshot &operator=(const SpoilerAnimationSnapshot&) = delete;
+
+};
+
 // Works with default frame duration and default frame count.
 class SpoilerAnimationManager;
 class SpoilerAnimation final {

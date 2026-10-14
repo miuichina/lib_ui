@@ -60,7 +60,13 @@ not_null<RpWidget*> Window::widget() const {
 std::unique_ptr<RpWindow> Window::createWindow(
 		const Fn<Backend(Capabilities)> &chooseBackend,
 		bool translucent) {
-	_backend = chooseBackend(CheckCapabilities());
+	const auto capabilities = CheckCapabilities();
+	_backend = chooseBackend(capabilities);
+#ifdef Q_OS_WIN
+	if (translucent && _backend == Backend::QRhi) {
+		_backend = capabilities.supported ? Backend::OpenGL : Backend::Raster;
+	}
+#endif // Q_OS_WIN
 	return std::make_unique<RpWindow>(translucent);
 }
 
