@@ -6,10 +6,12 @@
 //
 #include "ui/widgets/scroll_area.h"
 
+#include "ui/effects/animation_value.h"
 #include "ui/painter.h"
 #include "ui/ui_utility.h"
 #include "base/qt/qt_common_adapters.h"
 #include "base/debug_log.h"
+#include "base/options.h"
 
 #include <QtWidgets/QScrollBar>
 #include <QtWidgets/QApplication>
@@ -19,6 +21,14 @@
 
 namespace Ui {
 namespace {
+
+constexpr auto kOptionSmoothScroll = "xenon-smooth-scroll";
+constexpr auto kSmoothScrollDuration = crl::time(260);
+
+base::options::toggle OptionSmoothScroll({
+	.id = kOptionSmoothScroll,
+	.name = "Smooth scrolling",
+});
 
 [[nodiscard]] int ComputeScrollTo(
 		int toFrom,
@@ -58,6 +68,10 @@ namespace {
 }
 
 } // namespace
+
+bool SmoothScrollEnabled() {
+	return OptionSmoothScroll.value();
+}
 
 // flick scroll taken from http://qt-project.org/doc/qt-4.8/demos-embedded-anomaly-src-flickcharm-cpp.html
 
@@ -415,6 +429,24 @@ ScrollArea::ScrollArea(
 , _topShadow(this, &_st)
 , _bottomShadow(this, &_st)
 , _touchEnabled(handleTouch) {
+	_smoothWheelAnimation.init([=](crl::time now) {
+		const auto progress = std::clamp(
+			(now - _smoothWheelAnimation.started() - _smoothWheelTimeOffset)
+				/ float64(kSmoothScrollDuration),
+			0.,
+			1.);
+		const auto value = anim::interpolate(
+			_smoothWheelFrom,
+			_smoothWheelTo,
+			anim::easeOutQuint(1., progress));
+		scrollToY(value);
+		_smoothWheelLastApplied = value;
+		if (progress >= 1.) {
+			_smoothWheelAnimation.stop();
+			_smoothWheelLastApplied = -1;
+			_smoothWheelTimeOffset = 0;
+		}
+	});
 	setLayoutDirection(style::LayoutDirection());
 	setFocusPolicy(Qt::NoFocus);
 
@@ -624,6 +656,33 @@ bool ScrollArea::viewportEvent(QEvent *e) {
 	} else if (e->type() == QEvent::Wheel) {
 		const auto ev = static_cast<QWheelEvent*>(e);
 		if (_customWheelProcess && _customWheelProcess(ev)) {
+			return true;
+		}
+		if (OptionSmoothScroll.value()
+			&& ev->phase() == Qt::NoScrollPhase
+			&& ev->pixelDelta().isNull()
+			&& std::abs(ev->angleDelta().y()) == 120) {
+			const auto direction = (ev->angleDelta().y() > 0) ? -1 : 1;
+			const auto animationActive = _smoothWheelAnimation.animating()
+				&& (_smoothWheelLastApplied != _smoothWheelTo);
+			const auto top = animationActive && (_smoothWheelLastApplied >= 0)
+				? _smoothWheelLastApplied
+				: scrollTop();
+			const auto base = animationActive ? _smoothWheelTo : top;
+			_smoothWheelFrom = top;
+			_smoothWheelTo = std::clamp(
+				base + direction * verticalScrollBar()->singleStep()
+					* QApplication::wheelScrollLines(),
+				0,
+				scrollTopMax());
+			if (!animationActive) {
+				_smoothWheelLastApplied = -1;
+				_smoothWheelTimeOffset = 0;
+				_smoothWheelAnimation.start();
+			} else {
+				_smoothWheelTimeOffset = crl::now()
+					- _smoothWheelAnimation.started();
+			}
 			return true;
 		}
 		if (_wheelDirectionLocked || _crossAxisWheelProcess) {

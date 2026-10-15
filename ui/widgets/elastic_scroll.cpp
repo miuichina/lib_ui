@@ -6,6 +6,8 @@
 //
 #include "ui/widgets/elastic_scroll.h"
 
+#include "ui/widgets/scroll_area.h"
+#include "ui/effects/animation_value.h"
 #include "ui/painter.h"
 #include "ui/ui_utility.h"
 #include "base/qt/qt_common_adapters.h"
@@ -417,6 +419,23 @@ ElasticScroll::ElasticScroll(
 , _vertical(orientation == Qt::Vertical)
 , _position(Position{ 0, 0 })
 , _movement(Movement::None) {
+	_smoothWheelAnimation.init([=](crl::time now) {
+		const auto progress = std::clamp(
+			(now - _smoothWheelAnimation.started() - _smoothWheelTimeOffset)
+				/ float64(crl::time(260)),
+			0.,
+			1.);
+		tryScrollTo(int(base::SafeRound(anim::interpolate(
+			_smoothWheelFrom,
+			_smoothWheelTo,
+			anim::easeOutQuint(1., progress)))));
+		_smoothWheelLastApplied = _state.visibleFrom;
+		if (progress >= 1.) {
+			_smoothWheelAnimation.stop();
+			_smoothWheelLastApplied = -1;
+			_smoothWheelTimeOffset = 0;
+		}
+	});
 	setAttribute(Qt::WA_AcceptTouchEvents);
 
 	_bar->visibleFromDragged(
@@ -947,6 +966,29 @@ bool ElasticScroll::handleWheelEvent(not_null<QWheelEvent*> e, bool touch) {
 	}
 	if (phase == Qt::NoScrollPhase) {
 		if (_overscroll == currentOverscrollDefault()) {
+			if (SmoothScrollEnabled() && delta) {
+				const auto animationActive = _smoothWheelAnimation.animating()
+					&& (_smoothWheelLastApplied != _smoothWheelTo);
+				const auto top = animationActive
+					&& (_smoothWheelLastApplied >= 0)
+					? _smoothWheelLastApplied
+					: _state.visibleFrom;
+				const auto base = animationActive ? _smoothWheelTo : top;
+				_smoothWheelFrom = top;
+				_smoothWheelTo = std::clamp(
+					base + delta,
+					0,
+					scrollTopMax());
+				if (!animationActive) {
+					_smoothWheelLastApplied = -1;
+					_smoothWheelTimeOffset = 0;
+					_smoothWheelAnimation.start();
+				} else {
+					_smoothWheelTimeOffset = crl::now()
+						- _smoothWheelAnimation.started();
+				}
+				return true;
+			}
 			const auto weak = base::make_weak(this);
 			requestBottomContent(delta);
 			if (!weak) {

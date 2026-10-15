@@ -18,6 +18,8 @@
 
 namespace Ui {
 
+[[nodiscard]] bool SmoothScrollEnabled();
+
 // Touch flick ignore 3px.
 inline constexpr auto kFingerAccuracyThreshold = 3;
 
@@ -269,6 +271,11 @@ private:
 	ScrollDirectionLock _wheelDirectionLock;
 	bool _wheelDirectionLocked = false;
 	bool _widgetAcceptsTouch = false;
+	Animations::Basic _smoothWheelAnimation;
+	int _smoothWheelFrom = 0;
+	int _smoothWheelTo = 0;
+	int _smoothWheelLastApplied = -1;
+	crl::time _smoothWheelTimeOffset = 0;
 
 	object_ptr<QWidget> _widget = { nullptr };
 
