@@ -6,21 +6,201 @@
 //
 #include "ui/effects/radial_animation.h"
 
+#include "base/options.h"
 #include "ui/arc_angles.h"
 #include "ui/painter.h"
 #include "styles/style_widgets.h"
+
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <numbers>
+#include <QtCore/QLineF>
+#include <QtGui/QPainterPath>
 
 namespace Ui {
 namespace {
 
 constexpr auto kFullArcLength = arc::kFullLength;
+constexpr auto kMd3Cycle = crl::time(6000);
+constexpr auto kOptionMd3LoadingIndicators = "xenon-md3-loading-indicators";
+
+base::options::toggle OptionMd3LoadingIndicators({
+	.id = kOptionMd3LoadingIndicators,
+	.name = "MD3 loading indicators",
+});
+
+base::options::toggle OptionMd3LoadingWaves({
+	.id = "xenon-md3-loading-waves",
+	.name = "MD3 loading indicator waves",
+});
+
+void DrawWavyRadial(
+		QPainter &p,
+		const QRectF &rect,
+		const RadialState &state) {
+	constexpr auto kSteps = 180;
+	constexpr auto kWaves = 11;
+	const auto radius = std::min(rect.width(), rect.height()) / 2.;
+	const auto amplitude = radius * 0.05 * state.waveAmplitude;
+	const auto phase = (crl::now() % 11000) / 11000.;
+	auto points = std::array<QPointF, kSteps + 1>();
+	auto distances = std::array<float64, kSteps + 1>();
+	for (auto i = 0; i <= kSteps; ++i) {
+		const auto angle = i * 2. * std::numbers::pi / kSteps;
+		const auto r = radius + amplitude * std::sin(kWaves * angle);
+		points[i] = QPointF(r * std::cos(angle), r * std::sin(angle));
+		if (i) {
+			distances[i] = distances[i - 1]
+				+ QLineF(points[i - 1], points[i]).length();
+		}
+	}
+	const auto perimeter = distances.back();
+	if (perimeter <= 0.) {
+		return;
+	}
+	const auto start = phase * perimeter;
+	const auto end = start + std::abs(state.arcLength)
+		* perimeter / kFullArcLength;
+	auto path = QPainterPath();
+	const auto pointAt = [&](float64 distance) {
+		distance = std::fmod(distance, perimeter);
+		const auto next = std::clamp(int(std::upper_bound(
+			distances.begin(), distances.end(), distance)
+			- distances.begin()), 1, kSteps);
+		const auto fraction = (distance - distances[next - 1])
+			/ (distances[next] - distances[next - 1]);
+		return points[next - 1] * (1. - fraction) + points[next] * fraction;
+	};
+	path.moveTo(pointAt(start));
+	for (auto cycle = 0; cycle != 2; ++cycle) {
+		for (auto i = 1; i <= kSteps; ++i) {
+			const auto distance = distances[i] + cycle * perimeter;
+			if (distance > start && distance < end) {
+				path.lineTo(points[i]);
+			}
+		}
+	}
+	path.lineTo(pointAt(end));
+	p.save();
+	p.translate(rect.center());
+	p.rotate(-(state.arcFrom + state.arcLength) / 16. - phase * 360.);
+	p.setBrush(Qt::NoBrush);
+	p.drawPath(path);
+	p.restore();
+}
+
+float64 MaterialEasing(
+		float64 fraction,
+		float64 x1,
+		float64 y1,
+		float64 x2,
+		float64 y2) {
+	fraction = std::clamp(fraction, 0., 1.);
+	if (fraction == 0. || fraction == 1.) {
+		return fraction;
+	}
+	auto low = 0.;
+	auto high = 1.;
+	for (auto i = 0; i != 24; ++i) {
+		const auto t = (low + high) / 2.;
+		const auto u = 1. - t;
+		const auto x = 3. * u * u * t * x1
+			+ 3. * u * t * t * x2 + t * t * t;
+		if (x < fraction) {
+			low = t;
+		} else {
+			high = t;
+		}
+	}
+	const auto t = (low + high) / 2.;
+	const auto u = 1. - t;
+	return 3. * u * u * t * y1 + 3. * u * t * t * y2 + t * t * t;
+}
+
+RadialState MaterialLoadingState(crl::time elapsed, float64 shown) {
+	const auto time = std::max(elapsed, crl::time(0)) % kMd3Cycle;
+	const auto rotationTime = time % 1500;
+	const auto rotation = 1080. * time / kMd3Cycle
+		+ 90. * (time / 1500)
+		+ 90. * std::min(rotationTime / 300., 1.)
+		+ 90.;
+	const auto growth = (time <= 3000)
+		? time / 3000.
+		: 1. - MaterialEasing((time - 3000) / 3000., 0.2, 0., 0., 1.);
+	const auto length = int(base::SafeRound((36. + 277.2 * growth) * 16.));
+	return {
+		.shown = shown,
+		.arcFrom = int(base::SafeRound(-rotation * 16.)) - length,
+		.arcLength = length,
+		.material = true,
+		.waveAmplitude = (time < 3000)
+			? MaterialEasing(time / 500., 0.2, 0., 0., 1.)
+			: 1. - MaterialEasing((time - 3000) / 500., 0.3, 0., 0.8, 0.15),
+	};
+}
 
 } // namespace
 
 const int RadialState::kFull = kFullArcLength;
 
+void DrawRadial(
+		QPainter &p,
+		const QRectF &rect,
+		const RadialState &state) {
+	PainterHighQualityEnabler hq(p);
+	const auto previous = p.pen();
+	if (state.material && OptionMd3LoadingIndicators.value()) {
+		auto pen = previous;
+		pen.setCapStyle(Qt::RoundCap);
+		p.setPen(pen);
+		const auto sweep = std::abs(state.arcLength) / 16.;
+		auto gap = 22.;
+		if (state.progress >= 0.) {
+			gap = std::clamp(22. * (325. - sweep) / 12., 0., 22.);
+			if (state.progress < 0.01 + 12. / 360.) {
+				const auto t = std::clamp(
+					(state.progress - 0.01) / (12. / 360.), 0., 1.);
+				gap = 22. * t * t * (3. - 2. * t);
+			}
+		}
+		const auto track = 360. - sweep - 2. * gap;
+		if (track > 0.) {
+			const auto opacity = p.opacity();
+			p.setOpacity(opacity * 0.4);
+			p.drawArc(
+				rect,
+				state.arcFrom + state.arcLength + int(base::SafeRound(gap * 16.)),
+				int(base::SafeRound(track * 16.)));
+			p.setOpacity(opacity);
+		}
+	}
+	if (state.material
+		&& OptionMd3LoadingIndicators.value()
+		&& OptionMd3LoadingWaves.value()
+		&& state.waveAmplitude > 0.
+		&& !anim::Disabled()) {
+		DrawWavyRadial(p, rect, state);
+	} else {
+		p.drawArc(rect, state.arcFrom, state.arcLength);
+	}
+	p.setPen(previous);
+}
+
+bool DrawMaterialLoading(
+		QPainter &p,
+		const QRectF &rect,
+		crl::time elapsed) {
+	if (!OptionMd3LoadingIndicators.value() || anim::Disabled()) {
+		return false;
+	}
+	DrawRadial(p, rect, MaterialLoadingState(elapsed, 1.));
+	return true;
+}
+
 void RadialAnimation::start(float64 prg) {
 	_firstStart = _lastStart = _lastTime = crl::now();
+	_wave = {};
 	const auto safe = std::max(prg, 0.0001) * arc::kAlmostFullLength;
 	const auto iprg = int(base::SafeRound(safe));
 	const auto strict = prg * arc::kAlmostFullLength;
@@ -67,6 +247,20 @@ bool RadialAnimation::update(float64 prg, bool finished, crl::time ms) {
 	}
 	auto fromstart = fulldt / st::radialPeriod;
 	_arcStart.update(fromstart - std::floor(fromstart), anim::linear);
+	const auto current = _arcEnd.current() / arc::kAlmostFullLength;
+	const auto amplitude = (prg < 0.01 || (current > 0.1 && current < 0.95))
+		? 1.
+		: 0.;
+	if (amplitude != _wave.target) {
+		_wave.from = _wave.current;
+		_wave.target = amplitude;
+		_wave.started = ms;
+	}
+	const auto fraction = (ms - _wave.started) / 500.;
+	const auto easing = (_wave.target > _wave.from)
+		? MaterialEasing(fraction, 0.2, 0., 0., 1.)
+		: MaterialEasing(fraction, 0.3, 0., 0.8, 0.15);
+	_wave.current = _wave.from + (_wave.target - _wave.from) * easing;
 	return result;
 }
 
@@ -94,7 +288,7 @@ void RadialAnimation::draw(
 
 	{
 		PainterHighQualityEnabler hq(p);
-		p.drawArc(inner, state.arcFrom, state.arcLength);
+		DrawRadial(p, inner, state);
 	}
 
 	p.setPen(was);
@@ -102,6 +296,25 @@ void RadialAnimation::draw(
 }
 
 RadialState RadialAnimation::computeState() const {
+	if (OptionMd3LoadingIndicators.value() && !anim::Disabled()) {
+		const auto progress = _arcEnd.to() / arc::kAlmostFullLength;
+		if (progress < 0.01 && !_finished) {
+			auto state = MaterialLoadingState(_lastTime - _firstStart, _opacity);
+			state.waveAmplitude *= _wave.current;
+			return state;
+		}
+		const auto current = _arcEnd.current() / arc::kAlmostFullLength;
+		const auto length = int(base::SafeRound(
+			std::clamp(current * kFullArcLength, 64., float64(kFullArcLength))));
+		return {
+			.shown = _opacity,
+			.arcFrom = arc::kQuarterLength - length,
+			.arcLength = length,
+			.material = true,
+			.progress = current,
+			.waveAmplitude = _wave.current,
+		};
+	}
 	auto length = arc::kMinLength + int(base::SafeRound(_arcEnd.current()));
 	auto from = arc::kQuarterLength
 		- length
@@ -227,10 +440,7 @@ void InfiniteRadialAnimation::Draw(
 
 		{
 			PainterHighQualityEnabler hq(p);
-			p.drawArc(
-				rect,
-				state.arcFrom,
-				state.arcLength);
+			DrawRadial(p, rect, state);
 		}
 	}
 	p.setPen(was);
@@ -239,6 +449,22 @@ void InfiniteRadialAnimation::Draw(
 }
 
 RadialState InfiniteRadialAnimation::computeState() {
+	auto state = computeLegacyState();
+	if (!OptionMd3LoadingIndicators.value()
+		|| anim::Disabled()
+		|| state.shown <= 0.) {
+		return state;
+	} else if (_fade.started) {
+		state.material = true;
+		state.waveAmplitude = MaterialLoadingState(
+			crl::now() - (_workStarted - _st.sineDuration), 1.).waveAmplitude;
+		return state;
+	}
+	return MaterialLoadingState(
+		crl::now() - (_workStarted - _st.sineDuration), state.shown);
+}
+
+RadialState InfiniteRadialAnimation::computeLegacyState() {
 	const auto now = crl::now();
 	const auto linear = kFullArcLength
 		- int(((now * kFullArcLength) / _st.linearPeriod) % kFullArcLength);

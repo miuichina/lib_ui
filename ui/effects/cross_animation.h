@@ -7,6 +7,7 @@
 #pragma once
 
 #include "styles/style_widgets.h"
+#include "crl/crl_time.h"
 
 class Painter;
 
@@ -22,7 +23,8 @@ public:
 		int y,
 		int outerWidth,
 		float64 shown,
-		float64 loading = 0.);
+		float64 loading = 0.,
+		crl::time loadingElapsed = 0);
 	static void paintStaticLoading(
 		QPainter &p,
 		const style::CrossAnimation &st,

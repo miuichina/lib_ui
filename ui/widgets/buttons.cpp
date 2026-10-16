@@ -801,7 +801,10 @@ void CrossButton::paintEvent(QPaintEvent *e) {
 		_st.crossPosition.y(),
 		width(),
 		shown,
-		loading);
+		loading,
+		_loadingAnimation.animating()
+			? crl::now() - _loadingAnimation.started()
+			: 0);
 }
 
 bool CrossButton::stopLoadingAnimation(crl::time now) {

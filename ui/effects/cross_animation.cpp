@@ -7,6 +7,7 @@
 #include "ui/effects/cross_animation.h"
 
 #include "ui/effects/animation_value.h"
+#include "ui/effects/radial_animation.h"
 #include "ui/arc_angles.h"
 #include "ui/painter.h"
 
@@ -117,7 +118,8 @@ void CrossAnimation::paint(
 		int y,
 		int outerWidth,
 		float64 shown,
-		float64 loading) {
+		float64 loading,
+		crl::time loadingElapsed) {
 	PainterHighQualityEnabler hq(p);
 
 	const auto stroke = style::ConvertScaleExact(st.stroke);
@@ -131,6 +133,22 @@ void CrossAnimation::paint(
 	const auto deleteWidth = st.size - 2 * deleteSkip;
 	const auto deleteHeight = st.size - 2 * deleteSkip;
 	const auto deleteStroke = stroke / M_SQRT2;
+	if (loadingElapsed > 0) {
+		const auto skip = (st.size * (1 - M_SQRT2)
+			+ 2 * M_SQRT2 * deleteSkip + stroke) / 2;
+		auto pen = color->p;
+		pen.setWidthF(stroke);
+		const auto previous = p.pen();
+		p.setPen(pen);
+		const auto painted = DrawMaterialLoading(
+			p,
+			QRectF(x + skip, y + skip, st.size - 2 * skip, st.size - 2 * skip),
+			loadingElapsed);
+		p.setPen(previous);
+		if (painted) {
+			return;
+		}
+	}
 	std::array<QPointF, kPointCount> pathDelete = { {
 		{ deleteLeft, deleteTop + deleteStroke },
 		{ deleteLeft + deleteStroke, deleteTop },

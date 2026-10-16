@@ -20,7 +20,20 @@ struct RadialState {
 	float64 shown = 0.;
 	int arcFrom = 0;
 	int arcLength = kFull;
+	bool material = false;
+	float64 progress = -1.;
+	float64 waveAmplitude = 1.;
 };
+
+void DrawRadial(
+	QPainter &p,
+	const QRectF &rect,
+	const RadialState &state);
+
+[[nodiscard]] bool DrawMaterialLoading(
+	QPainter &p,
+	const QRectF &rect,
+	crl::time elapsed);
 
 class RadialAnimation {
 public:
@@ -55,6 +68,12 @@ private:
 	anim::value _arcStart;
 	Ui::Animations::Basic _animation;
 	bool _finished = false;
+	struct {
+		crl::time started = 0;
+		float64 from = 1.;
+		float64 target = 1.;
+		float64 current = 1.;
+	} _wave;
 
 };
 
@@ -103,6 +122,7 @@ public:
 
 private:
 	void init();
+	[[nodiscard]] RadialState computeLegacyState();
 
 	const style::InfiniteRadialAnimation &_st;
 	crl::time _workStarted = 0;
