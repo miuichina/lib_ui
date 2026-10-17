@@ -35,6 +35,10 @@ base::options::toggle OptionMd3LoadingWaves({
 	.name = "MD3 loading indicator waves",
 });
 
+float64 MaterialEndGapRatio(float64 sweep) {
+	return std::clamp((325. - sweep) / 12., 0., 1.);
+}
+
 void DrawWavyRadial(
 		QPainter &p,
 		const QRectF &rect,
@@ -157,7 +161,7 @@ void DrawRadial(
 		const auto sweep = std::abs(state.arcLength) / 16.;
 		auto gap = 22.;
 		if (state.progress >= 0.) {
-			gap = std::clamp(22. * (325. - sweep) / 12., 0., 22.);
+			gap = 22. * MaterialEndGapRatio(sweep);
 			if (state.progress < 0.01 + 12. / 360.) {
 				const auto t = std::clamp(
 					(state.progress - 0.01) / (12. / 360.), 0., 1.);
@@ -180,7 +184,16 @@ void DrawRadial(
 		&& OptionMd3LoadingWaves.value()
 		&& state.waveAmplitude > 0.
 		&& !anim::Disabled()) {
-		DrawWavyRadial(p, rect, state);
+		auto wave = state;
+		if (state.progress >= 0.) {
+			wave.waveAmplitude *= MaterialEndGapRatio(
+				std::abs(state.arcLength) / 16.);
+		}
+		if (wave.waveAmplitude > 0.) {
+			DrawWavyRadial(p, rect, wave);
+		} else {
+			p.drawArc(rect, state.arcFrom, state.arcLength);
+		}
 	} else {
 		p.drawArc(rect, state.arcFrom, state.arcLength);
 	}
@@ -248,7 +261,7 @@ bool RadialAnimation::update(float64 prg, bool finished, crl::time ms) {
 	auto fromstart = fulldt / st::radialPeriod;
 	_arcStart.update(fromstart - std::floor(fromstart), anim::linear);
 	const auto current = _arcEnd.current() / arc::kAlmostFullLength;
-	const auto amplitude = (prg < 0.01 || (current > 0.1 && current < 0.95))
+	const auto amplitude = (prg < 0.01 || current > 0.1)
 		? 1.
 		: 0.;
 	if (amplitude != _wave.target) {
