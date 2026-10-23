@@ -272,10 +272,8 @@ private:
 	bool _wheelDirectionLocked = false;
 	bool _widgetAcceptsTouch = false;
 	Animations::Basic _smoothWheelAnimation;
-	int _smoothWheelFrom = 0;
-	int _smoothWheelTo = 0;
-	int _smoothWheelLastApplied = -1;
-	crl::time _smoothWheelTimeOffset = 0;
+	int _smoothWheelDelta = 0;
+	int _smoothWheelApplied = 0;
 
 	object_ptr<QWidget> _widget = { nullptr };
 

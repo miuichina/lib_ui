@@ -377,10 +377,8 @@ private:
 	crl::time _lastWheelEventTime = 0;
 	bool _lastWheelPhaseMomentum = false;
 	Animations::Basic _smoothWheelAnimation;
-	int _smoothWheelFrom = 0;
-	int _smoothWheelTo = 0;
-	int _smoothWheelLastApplied = -1;
-	crl::time _smoothWheelTimeOffset = 0;
+	int _smoothWheelDelta = 0;
+	int _smoothWheelApplied = 0;
 	int _pendingOverscrollDelta = 0;
 	int _springSide = 0;
 	int _springTarget = 0;

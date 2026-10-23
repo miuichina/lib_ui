@@ -10,6 +10,7 @@
 #include "ui/painter.h"
 #include "ui/ui_utility.h"
 #include "base/qt/qt_common_adapters.h"
+#include "base/algorithm.h"
 #include "base/debug_log.h"
 #include "base/options.h"
 
@@ -430,22 +431,26 @@ ScrollArea::ScrollArea(
 , _bottomShadow(this, &_st)
 , _touchEnabled(handleTouch) {
 	_smoothWheelAnimation.init([=](crl::time now) {
+		if (_disabled || !SmoothScrollEnabled()) {
+			_smoothWheelAnimation.stop();
+			return;
+		}
 		const auto progress = std::clamp(
-			(now - _smoothWheelAnimation.started() - _smoothWheelTimeOffset)
+			(now - _smoothWheelAnimation.started())
 				/ float64(kSmoothScrollDuration),
 			0.,
 			1.);
 		const auto value = anim::interpolate(
-			_smoothWheelFrom,
-			_smoothWheelTo,
+			0,
+			_smoothWheelDelta,
 			anim::easeOutQuint(1., progress));
-		scrollToY(value);
-		_smoothWheelLastApplied = value;
+		const auto delta = value - std::exchange(_smoothWheelApplied, value);
 		if (progress >= 1.) {
 			_smoothWheelAnimation.stop();
-			_smoothWheelLastApplied = -1;
-			_smoothWheelTimeOffset = 0;
 		}
+		// Content updates can move the scroll anchor between animation frames.
+		const auto bar = verticalScrollBar();
+		bar->setValue(bar->value() + delta);
 	});
 	setLayoutDirection(style::LayoutDirection());
 	setFocusPolicy(Qt::NoFocus);
@@ -655,36 +660,44 @@ bool ScrollArea::viewportEvent(QEvent *e) {
 		return true;
 	} else if (e->type() == QEvent::Wheel) {
 		const auto ev = static_cast<QWheelEvent*>(e);
-		if (_customWheelProcess && _customWheelProcess(ev)) {
-			return true;
+		if (_customWheelProcess) {
+			const auto weak = base::make_weak(this);
+			const auto consumed = _customWheelProcess(ev);
+			if (!weak) {
+				return true;
+			} else if (consumed) {
+				_smoothWheelAnimation.stop();
+				return true;
+			}
 		}
 		if (OptionSmoothScroll.value()
+			&& !_disabled
 			&& ev->phase() == Qt::NoScrollPhase
 			&& ev->pixelDelta().isNull()
-			&& std::abs(ev->angleDelta().y()) == 120) {
-			const auto direction = (ev->angleDelta().y() > 0) ? -1 : 1;
-			const auto animationActive = _smoothWheelAnimation.animating()
-				&& (_smoothWheelLastApplied != _smoothWheelTo);
-			const auto top = animationActive && (_smoothWheelLastApplied >= 0)
-				? _smoothWheelLastApplied
-				: scrollTop();
-			const auto base = animationActive ? _smoothWheelTo : top;
-			_smoothWheelFrom = top;
-			_smoothWheelTo = std::clamp(
-				base + direction * verticalScrollBar()->singleStep()
+			&& !ev->modifiers().testFlag(Qt::ShiftModifier)
+			&& std::abs(ev->angleDelta().y()) > std::abs(ev->angleDelta().x())
+			&& !(ev->angleDelta().y() % QWheelEvent::DefaultDeltasPerStep)) {
+			const auto steps = -ev->angleDelta().y()
+				/ QWheelEvent::DefaultDeltasPerStep;
+			const auto remaining = _smoothWheelAnimation.animating()
+				? (_smoothWheelDelta - _smoothWheelApplied)
+				: 0;
+			const auto pending = base::OppositeSigns(remaining, steps)
+				? 0
+				: remaining;
+			const auto top = scrollTop();
+			const auto bar = verticalScrollBar();
+			_smoothWheelDelta = std::clamp(
+				top + pending + steps * bar->singleStep()
 					* QApplication::wheelScrollLines(),
-				0,
-				scrollTopMax());
-			if (!animationActive) {
-				_smoothWheelLastApplied = -1;
-				_smoothWheelTimeOffset = 0;
-				_smoothWheelAnimation.start();
-			} else {
-				_smoothWheelTimeOffset = crl::now()
-					- _smoothWheelAnimation.started();
-			}
+				bar->minimum(),
+				bar->maximum()) - top;
+			_smoothWheelApplied = 0;
+			_smoothWheelAnimation.start();
+			ev->accept();
 			return true;
 		}
+		_smoothWheelAnimation.stop();
 		if (_wheelDirectionLocked || _crossAxisWheelProcess) {
 			const auto phase = ev->phase();
 			const auto delta = ScrollDeltaF(ev);
@@ -739,6 +752,7 @@ void ScrollArea::touchEvent(QTouchEvent *e) {
 
 	switch (e->type()) {
 	case QEvent::TouchBegin: {
+		_smoothWheelAnimation.stop();
 		if (_touchPress || e->touchPoints().isEmpty()) return;
 		_touchPress = true;
 		if (_touchScrollState == TouchScrollState::Auto) {
@@ -838,6 +852,7 @@ void ScrollArea::touchScrollUpdated(const QPoint &screenPos) {
 }
 
 void ScrollArea::disableScroll(bool dis) {
+	_smoothWheelAnimation.stop();
 	_disabled = dis;
 	if (_disabled && _st.hiding) {
 		_horizontalBar->hideTimeout(0);
@@ -895,6 +910,7 @@ void ScrollArea::moveEvent(QMoveEvent *e) {
 }
 
 void ScrollArea::keyPressEvent(QKeyEvent *e) {
+	_smoothWheelAnimation.stop();
 	if ((e->key() == Qt::Key_Up || e->key() == Qt::Key_Down)
 		&& (e->modifiers().testFlag(Qt::AltModifier)
 			|| e->modifiers().testFlag(Qt::ControlModifier))) {
@@ -970,10 +986,12 @@ void ScrollArea::scrollToX(int toLeft, int toRight) {
 }
 
 void ScrollArea::scrollToY(int toTop, int toBottom) {
+	_smoothWheelAnimation.stop();
 	verticalScrollBar()->setValue(computeScrollToY(toTop, toBottom));
 }
 
 void ScrollArea::doSetOwnedWidget(object_ptr<QWidget> w) {
+	_smoothWheelAnimation.stop();
 	if (widget() && _touchEnabled) {
 		widget()->removeEventFilter(this);
 		if (!_widgetAcceptsTouch) widget()->setAttribute(Qt::WA_AcceptTouchEvents, false);
@@ -991,6 +1009,7 @@ void ScrollArea::doSetOwnedWidget(object_ptr<QWidget> w) {
 }
 
 object_ptr<QWidget> ScrollArea::doTakeWidget() {
+	_smoothWheelAnimation.stop();
 	QScrollArea::takeWidget();
 	return std::move(_widget);
 }
@@ -1021,6 +1040,9 @@ bool ScrollArea::focusNextPrevChild(bool next) {
 }
 
 void ScrollArea::setMovingByScrollBar(bool movingByScrollBar) {
+	if (movingByScrollBar) {
+		_smoothWheelAnimation.stop();
+	}
 	_movingByScrollBar = movingByScrollBar;
 }
 
