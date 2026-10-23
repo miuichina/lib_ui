@@ -1391,8 +1391,11 @@ void ElasticScroll::touchScrollUpdated() {
 }
 
 void ElasticScroll::disableScroll(bool dis) {
-	_smoothWheelAnimation.stop();
 	_disabled = dis;
+	// Swipe handlers re-enable scrolling on every scroll notification.
+	if (_disabled) {
+		_smoothWheelAnimation.stop();
+	}
 	if (_disabled && _st.hiding) {
 		_bar->toggle(false);
 	}

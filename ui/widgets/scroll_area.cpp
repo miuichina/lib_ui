@@ -852,8 +852,11 @@ void ScrollArea::touchScrollUpdated(const QPoint &screenPos) {
 }
 
 void ScrollArea::disableScroll(bool dis) {
-	_smoothWheelAnimation.stop();
 	_disabled = dis;
+	// Swipe handlers re-enable scrolling on every scroll notification.
+	if (_disabled) {
+		_smoothWheelAnimation.stop();
+	}
 	if (_disabled && _st.hiding) {
 		_horizontalBar->hideTimeout(0);
 		_verticalBar->hideTimeout(0);
